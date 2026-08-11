@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="log_bg">#1E1E1E</color>
+    <color name="log_text">#D4D4D4</color>
+    <color name="warn_bg">#3E2723</color>
+    <color name="warn_text">#FF8A80</color>
+    <color name="warn_border">#BF360C</color>
+</resources>

@@ -1,0 +1,32 @@
+# ===== Android =====
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+# Keystore (签名密钥，绝不提交)
+android/smsrelay.keystore
+android/keystore.properties
+
+# ===== Python =====
+desktop/__pycache__/
+desktop/logs/
+desktop/build/
+desktop/dist/
+desktop/*.spec
+# 真实配置含 token，仅提交 .example 模板
+desktop/config.yaml
+# 图标中间产物（已内嵌进 exe，无需提交）
+desktop/app_icon_48.png
+
+# ===== 原始素材 =====
+*.keystore
+ComfyUI_temp_*.png
+
+# ===== IDE =====
+.idea/
+*.iml
+.vscode/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db

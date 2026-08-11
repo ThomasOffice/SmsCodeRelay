@@ -1,0 +1,7 @@
+pyserial>=3.5
+pyperclip>=1.8.2
+win11toast>=0.35
+pystray>=0.19.5
+Pillow>=10.0.0
+PyYAML>=6.0
+pyinstaller>=6.0

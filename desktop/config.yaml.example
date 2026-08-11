@@ -1,0 +1,33 @@
+# ===== 验证码蓝牙中继 - PC 端配置 =====
+
+# 蓝牙传入 COM 端口（Windows 蓝牙设置中为手机添加"传入COM端口"后填入）
+# 留空则自动探测形如 COM5+ 的蓝牙传入端口
+com_port: ""
+
+# 预共享 token，必须与 Android App 中填写的一致（防伪）
+# 运行 exe 后可在主窗口点击"生成新 Token"自动生成
+token: "CHANGE_ME"
+
+# 串口波特率（SPP 默认 9600，数据量小无需更高）
+baudrate: 9600
+
+# 去重窗口（秒）：相同验证码在此时间内只处理一次
+dedup_seconds: 3
+
+# 验证码识别规则（正则，按顺序匹配，命中即止）
+code_rules:
+  # 关键词 + 附近 4-8 位数字
+  - name: "中文验证码"
+    pattern: '(?:验证码|动态码|校验码|认证码|验证|密码)[^\d]{0,20}(\d{4,8})'
+  - name: "英文验证码"
+    pattern: '(?:verification code|code|OTP|passcode)[^\d]{0,20}(\d{4,8})'
+    flags: "IGNORECASE"
+  # 兜底：单独的 4-8 位数字
+  - name: "纯数字兜底"
+    pattern: '\b(\d{4,8})\b'
+
+# 通知开关
+notify: true
+
+# 日志级别：DEBUG / INFO / WARNING / ERROR
+log_level: "INFO"
