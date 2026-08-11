@@ -1,7 +1,7 @@
-"""Winsock2 蓝牙 RFCOMM 服务端 - 直接监听 SPP 连接，绕过 COM 端口。
+"""Winsock2 蓝牙 RFCOMM 服务端 - 直接监听固定端口，绕过 COM 端口和 SDP。
 
+PC 端 bind+listen 固定 RFCOMM 端口，Android 端用反射直连该端口（不做 SDP 查询）。
 其他软件扫描/占用 COM 端口完全不影响此模块。
-Android 端用 createRfcommSocketToServiceRecord(SPP_UUID) 直接连。
 """
 import ctypes
 import logging
@@ -10,12 +10,12 @@ import time
 
 log = logging.getLogger("bt_rfcomm")
 
-ws2_32 = ctypes.windll.ws2_32
+ws2_32 = ctypes.WinDLL("ws2_32")
 
 AF_BTH = 32
 BTPROTO_RFCOMM = 3
 SOCK_STREAM = 1
-INVALID_SOCKET = ~0
+INVALID_SOCKET = ctypes.c_uint64(~0).value
 SOCKET_ERROR = -1
 FIONBIO = 0x8004667E
 
@@ -23,25 +23,47 @@ WSAEWOULDBLOCK = 10035
 WSAECONNRESET = 10054
 WSAECONNABORTED = 10053
 
-# SPP UUID: 00001101-0000-1000-8000-00805F9B34FB (little-endian GUID)
-SPP_UUID_BYTES = bytes([
-    0x01, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
-    0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB
-])
+# 固定 RFCOMM 端口（1-30），PC 和 Android 必须一致
+RFCOMM_PORT = 5
+
+# SPP UUID（仅用于 bind，SDP 不注册）
+SPP_GUID_DATA1 = 0x00001101
+SPP_GUID_DATA2 = 0x0000
+SPP_GUID_DATA3 = 0x1000
+SPP_GUID_DATA4 = bytes([0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB])
+
+
+class GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", ctypes.c_uint32),
+        ("Data2", ctypes.c_uint16),
+        ("Data3", ctypes.c_uint16),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+
+def _make_spp_guid() -> GUID:
+    g = GUID()
+    g.Data1 = SPP_GUID_DATA1
+    g.Data2 = SPP_GUID_DATA2
+    g.Data3 = SPP_GUID_DATA3
+    for i, b in enumerate(SPP_GUID_DATA4):
+        g.Data4[i] = b
+    return g
 
 
 class SOCKADDR_BTH(ctypes.Structure):
+    """Windows socket 地址结构体，紧凑布局（packed），30 bytes。"""
     _pack_ = 1
     _fields_ = [
         ("addressFamily", ctypes.c_ushort),
         ("btAddr", ctypes.c_ulonglong),
-        ("serviceClassId", ctypes.c_byte * 16),
+        ("serviceClassId", GUID),
         ("port", ctypes.c_ulong),
     ]
 
 
 class WSADATA(ctypes.Structure):
-    _pack_ = 1
     _fields_ = [
         ("wVersion", ctypes.c_ushort),
         ("wHighVersion", ctypes.c_ushort),
@@ -53,6 +75,28 @@ class WSADATA(ctypes.Structure):
     ]
 
 
+# 设置 argtypes（64 位必须）
+ws2_32.WSAStartup.argtypes = [ctypes.c_ushort, ctypes.POINTER(WSADATA)]
+ws2_32.WSAStartup.restype = ctypes.c_int
+ws2_32.WSACleanup.argtypes = []
+ws2_32.WSACleanup.restype = ctypes.c_int
+ws2_32.socket.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+ws2_32.socket.restype = ctypes.c_uint64
+ws2_32.bind.argtypes = [ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+ws2_32.bind.restype = ctypes.c_int
+ws2_32.listen.argtypes = [ctypes.c_uint64, ctypes.c_int]
+ws2_32.listen.restype = ctypes.c_int
+ws2_32.accept.argtypes = [ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+ws2_32.accept.restype = ctypes.c_uint64
+ws2_32.recv.argtypes = [ctypes.c_uint64, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+ws2_32.recv.restype = ctypes.c_int
+ws2_32.closesocket.argtypes = [ctypes.c_uint64]
+ws2_32.closesocket.restype = ctypes.c_int
+ws2_32.ioctlsocket.argtypes = [ctypes.c_uint64, ctypes.c_long, ctypes.POINTER(ctypes.c_ulong)]
+ws2_32.ioctlsocket.restype = ctypes.c_int
+ws2_32.WSAGetLastError.argtypes = []
+ws2_32.WSAGetLastError.restype = ctypes.c_int
+
 _wsa_started = False
 
 
@@ -61,14 +105,18 @@ def _ensure_wsa():
     if _wsa_started:
         return
     wsa = WSADATA()
-    ret = ws2_32.WSAStartup(ctypes.c_ushort(0x0202), ctypes.byref(wsa))
+    ret = ws2_32.WSAStartup(0x0202, ctypes.byref(wsa))
     if ret != 0:
         raise OSError(f"WSAStartup failed: {ret}")
     _wsa_started = True
 
 
 class BtRfcommServer(threading.Thread):
-    """蓝牙 RFCOMM 服务端线程。直接用 Winsock2 监听，不依赖 COM 端口。"""
+    """蓝牙 RFCOMM 服务端线程。
+
+    直接用 Winsock2 在固定 RFCOMM 端口监听，不依赖 COM 端口，不注册 SDP。
+    Android 端用反射 createRfcommSocket(port) 直连，绕过 SDP 查询。
+    """
 
     def __init__(self, handler, stop_event: threading.Event):
         super().__init__(daemon=True)
@@ -89,12 +137,15 @@ class BtRfcommServer(threading.Thread):
         addr = SOCKADDR_BTH()
         addr.addressFamily = AF_BTH
         addr.btAddr = 0
-        addr.port = 0
-        for i in range(16):
-            addr.serviceClassId[i] = SPP_UUID_BYTES[i]
+        addr.port = RFCOMM_PORT
+        addr.serviceClassId = _make_spp_guid()
 
-        if ws2_32.bind(sock, ctypes.byref(addr), ctypes.c_int(ctypes.sizeof(addr))) == SOCKET_ERROR:
-            log.error("bind 失败: %d", ws2_32.WSAGetLastError())
+        if ws2_32.bind(sock, ctypes.byref(addr), ctypes.sizeof(SOCKADDR_BTH)) == SOCKET_ERROR:
+            err = ws2_32.WSAGetLastError()
+            if err == 10048:  # WSAEADDRINUSE
+                log.warning("RFCOMM 端口 %d 被占用，可能上次未正常关闭", RFCOMM_PORT)
+            else:
+                log.error("bind 失败: %d", err)
             ws2_32.closesocket(sock)
             return False
 
@@ -108,7 +159,7 @@ class BtRfcommServer(threading.Thread):
 
         self.server_sock = sock
         self.listening = True
-        log.info("蓝牙 RFCOMM 服务端已启动 (Winsock2 直连，绕过 COM 端口)")
+        log.info("蓝牙 RFCOMM 服务端已启动 (端口 %d, Winsock2 直连模式)", RFCOMM_PORT)
         return True
 
     def _accept_client(self) -> bool:

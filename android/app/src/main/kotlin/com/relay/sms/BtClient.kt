@@ -17,6 +17,9 @@ object BtClient {
     private const val TAG = "BtClient"
     val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
+    // 固定 RFCOMM 端口，必须与 PC 端 bt_rfcomm.py 的 RFCOMM_PORT 一致
+    private const val RFCOMM_PORT = 5
+
     data class Result(val ok: Boolean, val msg: String)
 
     fun send(context: Context, deviceAddress: String, payload: JSONObject): Result {
@@ -51,24 +54,48 @@ object BtClient {
             var socket: BluetoothSocket? = null
             var out: OutputStream? = null
             try {
-                socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
-                try {
-                    adapter.cancelDiscovery()
-                } catch (e: SecurityException) {
-                    Log.w(TAG, "cancelDiscovery 被权限拒绝，继续: ${e.message}")
-                }
+                adapter.cancelDiscovery()
+
+                // 方式1：反射直连固定 RFCOMM 端口（绕过 SDP 查询）
+                // PC 端用 Winsock2 bind+listen 此端口，不注册 SDP
+                Log.i(TAG, "尝试反射直连端口 $RFCOMM_PORT (第${attempt}次)")
+                val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                socket = method.invoke(device, RFCOMM_PORT) as BluetoothSocket
+
                 socket.connect()
                 out = socket.outputStream
                 val data = (payload.toString() + "\n").toByteArray(Charsets.UTF_8)
                 out.write(data)
                 out.flush()
-                Log.i(TAG, "已发送: ${payload.optString("code")} (第${attempt}次尝试)")
+                Log.i(TAG, "已发送: ${payload.optString("code")} (端口$RFCOMM_PORT, 第${attempt}次)")
                 return Result(true, "已发送 ${data.size} 字节")
             } catch (e: Exception) {
                 lastError = e
-                Log.w(TAG, "第${attempt}次连接失败: ${e.message}")
+                Log.w(TAG, "反射直连失败(第${attempt}次): ${e.message}")
                 try { out?.close() } catch (_: Exception) {}
                 try { socket?.close() } catch (_: Exception) {}
+
+                // 方式2：回退到 SDP 方式（兼容旧 PC 端 COM 端口模式）
+                if (attempt == 1) {
+                    Log.i(TAG, "尝试 SDP 方式回退...")
+                    var socket2: BluetoothSocket? = null
+                    var out2: OutputStream? = null
+                    try {
+                        socket2 = device.createRfcommSocketToServiceRecord(SPP_UUID)
+                        socket2.connect()
+                        out2 = socket2.outputStream
+                        val data = (payload.toString() + "\n").toByteArray(Charsets.UTF_8)
+                        out2.write(data)
+                        out2.flush()
+                        Log.i(TAG, "SDP 方式发送成功")
+                        return Result(true, "已发送 ${data.size} 字节 (SDP)")
+                    } catch (e2: Exception) {
+                        Log.w(TAG, "SDP 回退也失败: ${e2.message}")
+                        try { out2?.close() } catch (_: Exception) {}
+                        try { socket2?.close() } catch (_: Exception) {}
+                    }
+                }
+
                 if (attempt < 3) Thread.sleep(500)
             }
         }
