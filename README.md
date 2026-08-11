@@ -7,28 +7,42 @@
 ## 下载
 
 从 [Releases](../../releases) 页面下载：
-- **`SmsRelay.exe`** — PC 端程序（免安装，双击运行，16MB）
+- **`SmsRelay.exe`** — PC 端程序（免安装，双击运行，16MB，无需装 Python）
 - **`app-release.apk`** — Android App（安装到手机）
 
 ## 架构
 
 ```
-Android 手机                          PC (Windows)
-┌─────────────────┐   蓝牙 SPP    ┌──────────────────┐
-│ 辅助 App (Kotlin) │ ──────────> │ Python 服务       │
-│ · 监听短信       │   JSON 行     │ · 读 COM 端口     │
-│ · 正则提取验证码  │              │ · token 校验去重   │
-│ · 蓝牙发送       │              │ · 写剪贴板+通知    │
-│ · 前台服务保活    │              │ · 系统托盘常驻     │
-└─────────────────┘              └──────────────────┘
+Android 手机                            PC (Windows)
+┌─────────────────────┐  蓝牙 RFCOMM  ┌──────────────────────┐
+│ 辅助 App (Kotlin)    │ ────────────> │ Python 服务           │
+│ · 轮询短信数据库      │  JSON 行      │ · Winsock2 直连监听    │
+│ · 正则提取验证码      │              │ · token 校验去重       │
+│ · 反射直连蓝牙端口    │              │ · 写剪贴板+通知        │
+│ · 前台服务保活        │              │ · 系统托盘+轻量UI      │
+│ · 验证码保护检测      │              │ · 一键生成Token        │
+└─────────────────────┘              └──────────────────────┘
 ```
+
+PC 端使用 **Winsock2 蓝牙 API 直接监听 RFCOMM 端口**，绕过 Windows COM 端口中间层，其他软件扫描/占用 COM 端口完全不影响连接。
+
+## 功能特性
+
+- **自动提取验证码** — 中英文验证码正则识别，规则可配置
+- **蓝牙实时传输** — Winsock2 直连 RFCOMM 端口，绕过 COM 端口，不受其他软件干扰
+- **自动写入剪贴板** — 收到验证码后 1 秒内写入 PC 剪贴板，Ctrl+V 粘贴
+- **Windows 通知** — 弹出通知显示验证码和发送方
+- **系统托盘常驻** — 无终端窗口，双击托盘图标弹出轻量状态窗口
+- **一键生成 Token** — UI 内生成随机 Token，自动复制到剪贴板
+- **验证码安全保护检测** — 检测华为/荣耀等国产 ROM 的验证码保护功能并提醒
+- **深色模式适配** — 日志区配色随系统主题切换
+- **华为/荣耀后台保活** — 轮询短信数据库，绕过后台广播冻结
 
 ## 前置条件
 
 - Windows 10/11 PC，带蓝牙
 - Android 7.0+ 手机
-- Python 3.10+（PC 端）
-- Android 开发环境（仅打包 APK 时需要：JDK 17 + Android SDK）
+- 手机与 PC 已蓝牙配对
 
 ## 快速开始
 
@@ -43,47 +57,33 @@ Android 手机                          PC (Windows)
 ```powershell
 cd desktop
 pip install -r requirements.txt
-# 从模板创建配置（首次）
-Copy-Item config.yaml.example config.yaml
-# 编辑 config.yaml 设置 token 等
 python server.py          # 直接运行
 # 或打包成 exe：
 pwsh -ExecutionPolicy Bypass -File build_exe.ps1
 ```
 
-生成的 `dist\SmsRelay.exe`（约 16MB），config.yaml 已内嵌，首次运行自动提取到 `%APPDATA%\SmsRelay\`。
+启动后无终端窗口，自动隐藏到系统托盘。双击托盘图标弹出轻量状态窗口（显示连接状态、Token、最近验证码记录），关闭窗口则回到托盘后台运行。右键托盘图标可退出。
 
-启动后无终端窗口，自动隐藏到系统托盘。双击托盘图标弹出轻量状态窗口（显示连接状态、COM 端口、Token、最近验证码记录），关闭窗口则回到托盘后台运行。右键托盘图标可退出。
+### 2. 安装 Android App
 
-### 2. 打包并安装 Android App
+从 [Releases](../../releases) 下载 `app-release.apk` 传到手机安装。
 
+或自行构建：
 ```powershell
 cd android
-# 构建 Debug APK（可直接安装）
-powershell -ExecutionPolicy Bypass -File build_apk.ps1
-
-# 或构建签名 Release APK
 powershell -ExecutionPolicy Bypass -File build_apk.ps1 -Release
+adb install "app\build\outputs\apk\release\app-release.apk"
 ```
 
-安装到手机（需开启 USB 调试）：
-```powershell
-adb install "app\build\outputs\apk\debug\app-debug.apk"
-```
+### 3. 配对与配置
 
-### 3. 蓝牙配对与 COM 端口配置
-
-1. **配对**：手机与 PC 蓝牙配对（Windows 设置 → 蓝牙和其他设备 → 添加设备）
-2. **添加传入 COM 端口**：
-   - Windows 设置 → 蓝牙和其他设备 → 更多蓝牙设置（或"设备和打印机"）
-   - COM 端口选项卡 → 添加 → 传入 → 选择手机 → 确认
-   - 记住分配的 COM 端口号（如 COM5）
-3. **配置 PC 端**：将 `config.yaml` 的 `com_port` 设为该端口，或留空自动探测
-4. **配置 App**：
+1. **蓝牙配对**：手机与 PC 蓝牙配对（Windows 设置 → 蓝牙和其他设备 → 添加设备）
+2. **启动 PC 端**：双击 `SmsRelay.exe`，状态显示"监听中，等待 Android 连接"
+3. **配置 App**：
    - 打开手机上的"验证码中继"App
    - 授予短信和蓝牙权限
    - 选择已配对的 PC 蓝牙设备
-   - 输入与 PC 端相同的 token
+   - 输入与 PC 端相同的 token（PC 端主窗口可见，点击可复制）
    - 点击"保存配置" → "启动监听"
 
 ### 4. 使用
@@ -102,16 +102,20 @@ adb install "app\build\outputs\apk\debug\app-debug.apk"
 
 ```
 CAPTCHA/
-├── README.md              本文档
-├── protocol.md            通信协议
-├── .gitignore
-├── desktop/               PC 端 Python 服务
-│   ├── server.py          主程序（COM 读取+剪贴板+通知+托盘）
-│   ├── code_parser.py     验证码正则提取
-│   ├── config.yaml        配置（端口/token/规则）
-│   └── requirements.txt   Python 依赖
-└── android/               Android App 工程
-    ├── build_apk.ps1      一键打包脚本
+├── README.md                      本文档
+├── protocol.md                    通信协议
+├── LICENSE                        MIT
+├── desktop/                       PC 端 Python 服务
+│   ├── server.py                  主程序（UI+托盘+剪贴板+通知）
+│   ├── bt_rfcomm.py               Winsock2 蓝牙 RFCOMM 服务端
+│   ├── code_parser.py             验证码正则提取
+│   ├── config.yaml                配置（内嵌进 exe）
+│   ├── config.yaml.example        配置模板
+│   ├── app_icon.ico / .png        应用图标
+│   ├── build_exe.ps1              exe 打包脚本
+│   └── requirements.txt           Python 依赖
+└── android/                       Android App 工程
+    ├── build_apk.ps1              APK 打包脚本
     ├── settings.gradle.kts
     ├── build.gradle.kts
     ├── gradle/ wrapper
@@ -120,57 +124,66 @@ CAPTCHA/
         ├── build.gradle.kts
         └── src/main/
             ├── AndroidManifest.xml
-            ├── res/                布局/字符串/图标
+            ├── res/                        布局/图标/主题/夜间配色
             └── kotlin/com/relay/sms/
-                ├── MainActivity.kt       配置界面
-                ├── SmsReceiver.kt        短信广播接收
-                ├── CodeExtractor.kt      验证码提取
-                ├── BtClient.kt           蓝牙 SPP 客户端
-                └── KeepAliveService.kt   前台服务保活
+                ├── MainActivity.kt          配置界面+日志+测试按钮
+                ├── SmsPoller.kt             短信数据库轮询
+                ├── SmsReceiver.kt           短信广播接收（备用）
+                ├── CodeExtractor.kt         验证码正则提取
+                ├── CodeProtector.kt         验证码安全保护检测
+                ├── BtClient.kt              蓝牙反射直连客户端
+                ├── KeepAliveService.kt      前台服务保活
+                ├── SmsProcessor.kt          短信处理逻辑
+                └── NotifHelper.kt           通知辅助
 ```
 
 ## 常见问题
 
-### Q: PC 端提示"未自动探测到蓝牙 COM 端口"
-A: 需在 Windows 蓝牙设置中手动添加"传入 COM 端口"（见上方步骤 3），然后将端口号填入 `config.yaml`。
+### Q: 手机提示"转发失败: IOException"
+A: 蓝牙连接失败，排查：
+1. 确认手机与 PC 已蓝牙**配对**（不只是开启蓝牙）
+2. 确认 PC 端 `SmsRelay.exe` 正在运行且状态显示"监听中"
+3. 尝试在 App 内点击"测试蓝牙转发"验证连接
+4. 若 PC 端曾运行过旧版（COM 端口模式），重启 PC 清除残留的 COM 端口状态
+5. 确认没有其他蓝牙 SPP 程序占用端口
 
-### Q: 提示"打开 COM 端口失败: FileNotFoundError"
-A: 探测到了蓝牙端口但它不可用。常见原因：
-- **选到了传出端口/幽灵端口**：server 会自动区分传入/传出端口并实测打开，若仍失败，说明没有可用的传入端口。请在 Windows「蓝牙设置 → 更多蓝牙设置 → COM 端口」选项卡中添加一个**传入**端口（不是传出），再将该端口号手动填入 `config.yaml` 的 `com_port`。
-- **端口被占用**：确认没有其他程序（如串口调试助手）占用该端口。
-- 排查命令（列出所有 COM 端口及 hwid）：
-  ```powershell
-  python -c "import serial.tools.list_ports as lp; [print(p.device, '|', p.hwid) for p in lp.comports()]"
-  ```
-  hwid 含 `000000000000` 的才是传入端口；含 12 位真实设备地址的是传出端口（不可用于监听）。
+### Q: 手机收到短信但 App 无反应
+A: 华为/荣耀等国产 ROM 会冻结后台广播，本工具已改用**轮询短信数据库**绕过此限制：
+1. 确认 App 已"启动监听"（通知栏有"验证码中继运行中"）
+2. 在系统设置中关闭该 App 的电池优化
+3. 检查 App 日志区是否显示"轮询启动"
+4. 若日志显示"验证码安全保护提醒"，按提示关闭该系统功能
 
-### Q: App 提示"发送失败"
-A: 检查：① 手机与 PC 已蓝牙配对 ② PC 端 server.py 正在运行且 COM 端口已打开 ③ App 中选择的设备正确 ④ token 一致。
+### Q: 验证码被系统屏蔽为星号(*)
+A: 华为/荣耀的「验证码安全保护」功能会把短信中的验证码数字替换为 `*`。关闭路径：设置 → 安全 → 更多安全设置 → 验证码安全保护。
 
 ### Q: 后台被系统杀死
-A: 在手机系统设置中关闭该 App 的电池优化，前台服务通知需保持开启。
+A: 在手机系统设置中：关闭该 App 的电池优化 + 允许自启动 + 允许后台活动。前台服务通知需保持开启。
 
 ### Q: 验证码识别不准
-A: 编辑 `config.yaml` 的 `code_rules`，添加自定义正则规则。
+A: 编辑 `%APPDATA%\SmsRelay\config.yaml` 的 `code_rules`，添加自定义正则规则。
 
-### Q: 换了手机或重装后 COM 端口变了
-A: 重新配对并添加传入 COM 端口，更新 `config.yaml`。
+### Q: 如何更换 Token
+A: PC 端主窗口点击"生成新 Token"按钮，自动生成随机串并复制到剪贴板。然后在手机 App 中更新相同 Token。
 
 ## 安全说明
 
-- token 为预共享密钥，防止局域网/蓝牙伪造
+- Token 为预共享密钥，防止蓝牙链路上的伪造消息
 - 蓝牙配对本身提供链路层加密
-- PC 端仅监听蓝牙 COM 端口，不暴露网络端口
-- keystore 密码为示例值，正式使用请自行生成（`build_apk.ps1` 不含签名密钥管理，需手动 `keytool`）
+- PC 端不暴露任何网络端口，仅监听蓝牙 RFCOMM
+- 配置文件存储在 `%APPDATA%\SmsRelay\`，不暴露在 exe 同目录
+- keystore 密码为示例值，正式使用请自行生成
 
 ## 技术栈
 
 | 模块 | 技术 |
 |------|------|
 | Android | Kotlin + Gradle 8.7 + AGP 8.5.2 + compileSdk 34 |
-| 蓝牙 | RFCOMM SPP，UUID `00001101-...` |
-| PC 端 | Python 3.13 + pyserial + pyperclip + win11toast + pystray |
-| 通信 | JSON over SPP，`\n` 分行 |
+| 蓝牙通信 | Winsock2 RFCOMM 直连（绕过 COM 端口和 SDP） |
+| PC 端 | Python 3.13 + ctypes + tkinter + pystray + pyperclip + win11toast |
+| 通信协议 | JSON over RFCOMM，`\n` 分行 |
+| Android 短信 | SmsPoller 轮询 `content://sms/inbox`（绕过广播冻结） |
+| Android 蓝牙 | 反射调用 `createRfcommSocket(port)` 直连（绕过 SDP 查询） |
 
 ## 从源码构建
 
