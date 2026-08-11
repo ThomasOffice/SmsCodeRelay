@@ -239,35 +239,52 @@ class SerialReader(threading.Thread):
     def open_port(self) -> bool:
         port = self.cfg.get("com_port") or ""
         if port:
-            try:
-                self.ser = serial.Serial(port, self.baudrate, timeout=1)
-                self.com_port = port
-                log.info("已打开 COM 端口(配置): %s @ %d baud", port, self.baudrate)
+            ok = self._try_open(port, "(配置)")
+            if ok:
                 return True
-            except Exception as e:
-                log.warning("配置的 COM 端口 %s 打不开: %s，回退自动探测", port, e)
-                self.ser = None
+            log.warning("配置的 COM 端口 %s 打不开，回退自动探测", port)
         port = detect_bluetooth_com(self.baudrate)
         if not port:
             return False
+        return self._try_open(port, "(自动)")
+
+    def _try_open(self, port: str, tag: str) -> bool:
+        """尝试独占打开 COM 端口。pyserial 在 Windows 上默认独占（dwShareMode=0），
+        一旦打开其他软件无法抢夺。"""
         try:
             self.ser = serial.Serial(port, self.baudrate, timeout=1)
             self.com_port = port
-            log.info("已打开 COM 端口(自动): %s @ %d baud", port, self.baudrate)
+            log.info("已独占打开 COM 端口%s: %s @ %d baud", tag, port, self.baudrate)
             return True
         except Exception as e:
-            log.error("打开 COM 端口 %s 失败: %s", port, e)
+            err_str = str(e)
+            if "Access is denied" in err_str or "拒绝访问" in err_str:
+                log.warning("COM %s 被其他程序占用: %s（请关闭串口调试工具等）", port, e)
+            elif "cannot find" in err_str or "找不到" in err_str:
+                log.warning("COM %s 是幽灵端口（可能被其他软件扫描后损坏）: %s", port, e)
+            else:
+                log.error("打开 COM 端口 %s 失败: %s", port, e)
             self.ser = None
             return False
 
     def run(self):
         buf = ""
+        fail_count = 0
         while not self.stop_event.is_set():
             if self.ser is None:
+                # 重试抢回端口：前5次快速重试(1秒)，之后降频(5秒)
+                delay = 1 if fail_count < 5 else 5
                 if not self.open_port():
-                    time.sleep(3)
+                    fail_count += 1
+                    if fail_count == 1:
+                        log.warning("端口不可用，正在尝试抢回（其他软件可能占用了端口）...")
+                    time.sleep(delay)
                     continue
+                fail_count = 0
             try:
+                # 持久保持端口打开：readline 超时返回空是正常的，
+                # 表示当前没有 Android 连接，但 Windows SPP 仍在监听。
+                # 绝不因静默而关闭端口——关闭的瞬间其他软件就会抢走它。
                 chunk = self.ser.readline()
                 if chunk:
                     try:
@@ -282,6 +299,7 @@ class SerialReader(threading.Thread):
                             log.debug("收到: %s", msg[:120])
                             self.handler.handle(msg)
             except serial.SerialException as e:
+                # 仅在真正异常时才关闭重连（不是静默超时）
                 log.warning("串口异常，将重连: %s", e)
                 try:
                     if self.ser:
@@ -412,6 +430,7 @@ class TrayApp:
         btns.pack(fill=tk.X, padx=12, pady=8)
         tk.Button(btns, text="复制最新验证码", command=self._copy_latest).pack(side=tk.LEFT, padx=4)
         tk.Button(btns, text="打开配置目录", command=self._open_dir).pack(side=tk.LEFT, padx=4)
+        tk.Button(btns, text="强制重连", command=self._force_reconnect).pack(side=tk.LEFT, padx=4)
         tk.Button(btns, text="隐藏到托盘", command=self.hide_window).pack(side=tk.RIGHT, padx=4)
 
     def _refresh_loop(self):
@@ -419,8 +438,15 @@ class TrayApp:
         if self.stop_event.is_set():
             return
         try:
-            st = "已连接" if self.reader.ser else "等待连接…"
-            self.lbl_status.config(text=f"状态: {st}")
+            if self.reader.ser:
+                st = "已连接"
+                self.lbl_status.config(text=f"状态: {st}", fg="#2e7d32")
+            elif self.reader.com_port:
+                st = "端口被占用，正在抢回..."
+                self.lbl_status.config(text=f"状态: {st}", fg="#c62828")
+            else:
+                st = "等待蓝牙传入端口..."
+                self.lbl_status.config(text=f"状态: {st}", fg="#f57c00")
             self.lbl_port.config(text=f"端口: {self.reader.com_port or '未连接'}")
             latest = self.record.latest()
             if latest:
@@ -438,6 +464,21 @@ class TrayApp:
         latest = self.record.latest()
         if latest:
             pyperclip.copy(latest[1])
+
+    def _force_reconnect(self):
+        """强制关闭并重新打开 COM 端口（当被其他软件抢走时手动恢复）。"""
+        log.info("用户触发强制重连")
+        self._flash_status("正在强制重连...")
+        try:
+            if self.reader.ser:
+                self.reader.ser.close()
+        except Exception:
+            pass
+        self.reader.ser = None
+        def _do_reconnect():
+            time.sleep(0.5)
+            self.reader.open_port()
+        threading.Thread(target=_do_reconnect, daemon=True).start()
 
     def _copy_text(self, text: str, label: str = "内容"):
         """复制文本到剪贴板并闪烁提示。"""

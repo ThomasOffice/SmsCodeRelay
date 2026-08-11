@@ -46,29 +46,32 @@ object BtClient {
         }
         if (device == null) return Result(false, "设备为空: $deviceAddress")
 
-        var socket: BluetoothSocket? = null
-        var out: OutputStream? = null
-        return try {
-            socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
-            // cancelDiscovery 需要 BLUETOOTH_SCAN 权限；失败不阻断发送
+        var lastError: Exception? = null
+        for (attempt in 1..3) {
+            var socket: BluetoothSocket? = null
+            var out: OutputStream? = null
             try {
-                adapter.cancelDiscovery()
-            } catch (e: SecurityException) {
-                Log.w(TAG, "cancelDiscovery 被权限拒绝，继续: ${e.message}")
+                socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
+                try {
+                    adapter.cancelDiscovery()
+                } catch (e: SecurityException) {
+                    Log.w(TAG, "cancelDiscovery 被权限拒绝，继续: ${e.message}")
+                }
+                socket.connect()
+                out = socket.outputStream
+                val data = (payload.toString() + "\n").toByteArray(Charsets.UTF_8)
+                out.write(data)
+                out.flush()
+                Log.i(TAG, "已发送: ${payload.optString("code")} (第${attempt}次尝试)")
+                return Result(true, "已发送 ${data.size} 字节")
+            } catch (e: Exception) {
+                lastError = e
+                Log.w(TAG, "第${attempt}次连接失败: ${e.message}")
+                try { out?.close() } catch (_: Exception) {}
+                try { socket?.close() } catch (_: Exception) {}
+                if (attempt < 3) Thread.sleep(500)
             }
-            socket.connect()
-            out = socket.outputStream
-            val data = (payload.toString() + "\n").toByteArray(Charsets.UTF_8)
-            out.write(data)
-            out.flush()
-            Log.i(TAG, "已发送: ${payload.optString("code")}")
-            Result(true, "已发送 ${data.size} 字节")
-        } catch (e: Exception) {
-            Log.e(TAG, "发送失败: ${e.message}")
-            Result(false, "连接/发送失败: ${e.javaClass.simpleName}: ${e.message}")
-        } finally {
-            try { out?.close() } catch (_: Exception) {}
-            try { socket?.close() } catch (_: Exception) {}
         }
+        return Result(false, "连接/发送失败(重试3次): ${lastError?.javaClass?.simpleName}: ${lastError?.message}")
     }
 }
