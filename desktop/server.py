@@ -1,6 +1,6 @@
 """验证码蓝牙中继 - PC 端服务
 
-从蓝牙传入 COM 端口读取 Android App 推送的验证码消息，
+通过 Winsock2 蓝牙 RFCOMM 直接监听 Android App 推送的验证码消息（绕过 COM 端口），
 校验 token、去重后写入系统剪贴板，并弹出 Windows 通知。
 双击运行后隐藏到系统托盘，双击托盘图标弹出轻量状态窗口。
 """
@@ -16,10 +16,10 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from pathlib import Path
 
-import serial
-import serial.tools.list_ports
 import yaml
 import pyperclip
+
+from bt_rfcomm import BtRfcommServer
 
 try:
     from win11toast import toast
@@ -95,48 +95,6 @@ def generate_token(length: int = 24) -> str:
     """生成随机 token（字母+数字）。"""
     alphabet = string.ascii_letters + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
-
-# ---------------- COM 端口探测 ----------------
-def detect_bluetooth_com(baudrate: int = 9600) -> str | None:
-    """自动探测可打开的蓝牙传入 COM 端口。
-
-    Windows 蓝牙 SPP 端口通过 hwid 区分：
-      - 传入端口(可监听)：hwid 中设备地址段为 000000000000（全0）
-      - 传出端口(PC主动连手机)：hwid 含真实 12 位设备地址
-    幽灵端口(已注册但不可用)会被实测打开排除。
-    """
-    incoming: list = []
-    outgoing: list = []
-    for p in serial.tools.list_ports.comports():
-        hwid = p.hwid or ""
-        desc = (p.description or "").lower()
-        is_bt = ("BTHENUM" in hwid or "bluetooth" in hwid.lower()
-                 or "蓝牙" in desc or "bluetooth" in desc)
-        if not is_bt:
-            continue
-        if "000000000000" in hwid:
-            incoming.append(p)
-        else:
-            outgoing.append(p)
-
-    log.info("蓝牙传入端口候选: %s", [p.device for p in incoming])
-    if outgoing:
-        log.info("蓝牙传出端口(将忽略): %s", [p.device for p in outgoing])
-
-    for p in incoming:
-        try:
-            s = serial.Serial(p.device, baudrate, timeout=1)
-            s.close()
-            log.info("自动选中可用传入端口: %s", p.device)
-            return p.device
-        except Exception as e:
-            log.warning("传入端口 %s 打不开(幽灵端口?)，跳过: %s", p.device, e)
-
-    log.warning("没有可打开的蓝牙传入端口")
-    return None
-
-def list_all_coms() -> list[str]:
-    return [p.device for p in serial.tools.list_ports.comports()]
 
 # ---------------- 验证码记录（线程安全） ----------------
 class CodeRecord:
@@ -225,98 +183,6 @@ class CodeHandler:
                 log.debug("通知失败: %s", e)
         return True
 
-# ---------------- 串口读取线程 ----------------
-class SerialReader(threading.Thread):
-    def __init__(self, cfg: dict, handler: CodeHandler, stop_event: threading.Event):
-        super().__init__(daemon=True)
-        self.cfg = cfg
-        self.handler = handler
-        self.stop_event = stop_event
-        self.ser: serial.Serial | None = None
-        self.com_port: str = ""
-        self.baudrate = cfg.get("baudrate", 9600)
-
-    def open_port(self) -> bool:
-        port = self.cfg.get("com_port") or ""
-        if port:
-            ok = self._try_open(port, "(配置)")
-            if ok:
-                return True
-            log.warning("配置的 COM 端口 %s 打不开，回退自动探测", port)
-        port = detect_bluetooth_com(self.baudrate)
-        if not port:
-            return False
-        return self._try_open(port, "(自动)")
-
-    def _try_open(self, port: str, tag: str) -> bool:
-        """尝试独占打开 COM 端口。pyserial 在 Windows 上默认独占（dwShareMode=0），
-        一旦打开其他软件无法抢夺。"""
-        try:
-            self.ser = serial.Serial(port, self.baudrate, timeout=1)
-            self.com_port = port
-            log.info("已独占打开 COM 端口%s: %s @ %d baud", tag, port, self.baudrate)
-            return True
-        except Exception as e:
-            err_str = str(e)
-            if "Access is denied" in err_str or "拒绝访问" in err_str:
-                log.warning("COM %s 被其他程序占用: %s（请关闭串口调试工具等）", port, e)
-            elif "cannot find" in err_str or "找不到" in err_str:
-                log.warning("COM %s 是幽灵端口（可能被其他软件扫描后损坏）: %s", port, e)
-            else:
-                log.error("打开 COM 端口 %s 失败: %s", port, e)
-            self.ser = None
-            return False
-
-    def run(self):
-        buf = ""
-        fail_count = 0
-        while not self.stop_event.is_set():
-            if self.ser is None:
-                # 重试抢回端口：前5次快速重试(1秒)，之后降频(5秒)
-                delay = 1 if fail_count < 5 else 5
-                if not self.open_port():
-                    fail_count += 1
-                    if fail_count == 1:
-                        log.warning("端口不可用，正在尝试抢回（其他软件可能占用了端口）...")
-                    time.sleep(delay)
-                    continue
-                fail_count = 0
-            try:
-                # 持久保持端口打开：readline 超时返回空是正常的，
-                # 表示当前没有 Android 连接，但 Windows SPP 仍在监听。
-                # 绝不因静默而关闭端口——关闭的瞬间其他软件就会抢走它。
-                chunk = self.ser.readline()
-                if chunk:
-                    try:
-                        line = chunk.decode("utf-8", errors="replace")
-                    except Exception:
-                        line = chunk.decode("latin-1", errors="replace")
-                    buf += line
-                    while "\n" in buf:
-                        msg, buf = buf.split("\n", 1)
-                        msg = msg.strip()
-                        if msg:
-                            log.debug("收到: %s", msg[:120])
-                            self.handler.handle(msg)
-            except serial.SerialException as e:
-                # 仅在真正异常时才关闭重连（不是静默超时）
-                log.warning("串口异常，将重连: %s", e)
-                try:
-                    if self.ser:
-                        self.ser.close()
-                except Exception:
-                    pass
-                self.ser = None
-                time.sleep(2)
-            except Exception as e:
-                log.error("读取异常: %s", e)
-                time.sleep(1)
-        if self.ser:
-            try:
-                self.ser.close()
-            except Exception:
-                pass
-
 # ---------------- 托盘图标 ----------------
 def _load_app_icon_png() -> "Image.Image":
     """加载应用图标 PNG（托盘和 UI 共用）。优先用打包内嵌，其次脚本目录。"""
@@ -339,16 +205,16 @@ def make_icon_image() -> "Image.Image":
 
 # ---------------- 主应用（tkinter UI + 托盘） ----------------
 class TrayApp:
-    def __init__(self, cfg: dict, handler: CodeHandler, reader: SerialReader, record: CodeRecord, stop_event: threading.Event):
+    def __init__(self, cfg: dict, handler: CodeHandler, bt_server: BtRfcommServer, record: CodeRecord, stop_event: threading.Event):
         self.cfg = cfg
         self.handler = handler
-        self.reader = reader
+        self.bt_server = bt_server
         self.record = record
         self.stop_event = stop_event
 
         self.root = tk.Tk()
         self.root.title("验证码蓝牙中继")
-        self.root.geometry("500x460")
+        self.root.geometry("520x580")
         self.root.withdraw()  # 启动即隐藏
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
         self.root.after(1000, self._refresh_loop)
@@ -415,8 +281,16 @@ class TrayApp:
         tk.Label(root, text="最近接收记录：", bg="#f0f0f0", anchor="w",
                  font=("Microsoft YaHei UI", 10)).pack(fill=tk.X, padx=12)
 
+        # 按钮行先 pack 到底部，确保始终可见（不被 Treeview 的 expand 挤掉）
+        btns = tk.Frame(root, bg="#f0f0f0")
+        btns.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=8)
+        tk.Button(btns, text="复制最新验证码", command=self._copy_latest).pack(side=tk.LEFT, padx=4)
+        tk.Button(btns, text="打开配置目录", command=self._open_dir).pack(side=tk.LEFT, padx=4)
+        tk.Button(btns, text="强制重连", command=self._force_reconnect).pack(side=tk.LEFT, padx=4)
+        tk.Button(btns, text="隐藏到托盘", command=self.hide_window).pack(side=tk.RIGHT, padx=4)
+
         cols = ("time", "code", "sender")
-        self.tree = ttk.Treeview(root, columns=cols, show="headings", height=10)
+        self.tree = ttk.Treeview(root, columns=cols, show="headings", height=8)
         self.tree.heading("time", text="时间")
         self.tree.heading("code", text="验证码")
         self.tree.heading("sender", text="发送方")
@@ -426,28 +300,18 @@ class TrayApp:
         self.tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
         self.tree.bind("<<TreeviewSelect>>", self._copy_tree_selected)
 
-        btns = tk.Frame(root, bg="#f0f0f0")
-        btns.pack(fill=tk.X, padx=12, pady=8)
-        tk.Button(btns, text="复制最新验证码", command=self._copy_latest).pack(side=tk.LEFT, padx=4)
-        tk.Button(btns, text="打开配置目录", command=self._open_dir).pack(side=tk.LEFT, padx=4)
-        tk.Button(btns, text="强制重连", command=self._force_reconnect).pack(side=tk.LEFT, padx=4)
-        tk.Button(btns, text="隐藏到托盘", command=self.hide_window).pack(side=tk.RIGHT, padx=4)
-
     def _refresh_loop(self):
         """每秒刷新 UI 状态。"""
         if self.stop_event.is_set():
             return
         try:
-            if self.reader.ser:
-                st = "已连接"
-                self.lbl_status.config(text=f"状态: {st}", fg="#2e7d32")
-            elif self.reader.com_port:
-                st = "端口被占用，正在抢回..."
-                self.lbl_status.config(text=f"状态: {st}", fg="#c62828")
+            if self.bt_server.connected:
+                self.lbl_status.config(text="状态: 已连接 (Android)", fg="#2e7d32")
+            elif self.bt_server.listening:
+                self.lbl_status.config(text="状态: 监听中，等待 Android 连接...", fg="#1565C0")
             else:
-                st = "等待蓝牙传入端口..."
-                self.lbl_status.config(text=f"状态: {st}", fg="#f57c00")
-            self.lbl_port.config(text=f"端口: {self.reader.com_port or '未连接'}")
+                self.lbl_status.config(text="状态: 正在启动蓝牙服务...", fg="#f57c00")
+            self.lbl_port.config(text="端口: Winsock2 RFCOMM (直连模式)")
             latest = self.record.latest()
             if latest:
                 self.lbl_latest.config(text=f"最新验证码: {latest[1]}  (来自 {latest[2]})")
@@ -466,19 +330,11 @@ class TrayApp:
             pyperclip.copy(latest[1])
 
     def _force_reconnect(self):
-        """强制关闭并重新打开 COM 端口（当被其他软件抢走时手动恢复）。"""
+        """强制重置蓝牙服务端，重新开始监听。"""
         log.info("用户触发强制重连")
-        self._flash_status("正在强制重连...")
-        try:
-            if self.reader.ser:
-                self.reader.ser.close()
-        except Exception:
-            pass
-        self.reader.ser = None
-        def _do_reconnect():
-            time.sleep(0.5)
-            self.reader.open_port()
-        threading.Thread(target=_do_reconnect, daemon=True).start()
+        self._flash_status("正在重置蓝牙服务...")
+        self.bt_server.force_reconnect()
+        self._flash_status("已重置，等待连接...")
 
     def _copy_text(self, text: str, label: str = "内容"):
         """复制文本到剪贴板并闪烁提示。"""
@@ -570,16 +426,17 @@ def main():
     cfg = load_config()
     setup_logging(cfg.get("log_level", "INFO"))
     log.info("===== 验证码蓝牙中继 PC 端启动 =====")
-    log.info("配置: token=%s, baud=%s, dedup=%ss",
-             cfg.get("token", "")[:4] + "***", cfg.get("baudrate"), cfg.get("dedup_seconds"))
+    log.info("配置: token=%s, dedup=%ss",
+             cfg.get("token", "")[:4] + "***", cfg.get("dedup_seconds"))
+    log.info("使用 Winsock2 蓝牙 RFCOMM 直连模式（绕过 COM 端口）")
 
     stop_event = threading.Event()
     record = CodeRecord()
     handler = CodeHandler(cfg, record)
-    reader = SerialReader(cfg, handler, stop_event)
-    reader.start()
+    bt_server = BtRfcommServer(handler, stop_event)
+    bt_server.start()
 
-    app = TrayApp(cfg, handler, reader, record, stop_event)
+    app = TrayApp(cfg, handler, bt_server, record, stop_event)
     app.run()
 
     stop_event.set()

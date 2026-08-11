@@ -19,14 +19,15 @@ pyinstaller --noconfirm --windowed --onefile `
     --collect-all pystray `
     --collect-all PIL `
     --hidden-import "tkinter" `
-    --hidden-import "serial.tools.list_ports" `
     --hidden-import "code_parser" `
+    --hidden-import "bt_rfcomm" `
     --exclude-module "PyQt5" --exclude-module "PyQt6" `
     --exclude-module "PySide2" --exclude-module "PySide6" `
     --exclude-module "matplotlib" --exclude-module "numpy" `
     --exclude-module "pandas" --exclude-module "scipy" `
     --exclude-module "IPython" --exclude-module "jupyter" `
     --exclude-module "notebook" --exclude-module "spyder" `
+    --exclude-module "serial" `
     server.py
 
 $exe = "dist\SmsRelay.exe"
