@@ -22,5 +22,19 @@ code_rules:
 # 通知开关
 notify: true
 
+# ===== 邮箱验证码接收（IMAP 轮询）=====
+# 在程序主窗口点击"邮箱设置"即可配置并自动保存到此处。
+# QQ 邮箱需先在网页端开启 IMAP 并生成授权码（设置 → 账号 → 开启 IMAP/SMTP 服务）。
+email:
+  enabled: false
+  imap_host: "imap.qq.com"
+  imap_port: 993
+  username: ""
+  password: ""            # QQ 授权码（非登录密码）
+  poll_interval: 30       # 轮询间隔（秒）
+  since_days: 1           # 只处理最近 N 天的邮件
+  mark_seen: true         # 处理后是否标记为已读
+  strict: true            # 严格模式：只处理含"验证码"等关键词的邮件，避免营销邮件误提取
+
 # 日志级别：DEBUG / INFO / WARNING / ERROR
 log_level: "INFO"

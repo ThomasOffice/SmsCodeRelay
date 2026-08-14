@@ -21,6 +21,8 @@ pyinstaller --noconfirm --windowed --onefile `
     --hidden-import "tkinter" `
     --hidden-import "code_parser" `
     --hidden-import "bt_rfcomm" `
+    --hidden-import "email_poller" `
+    --hidden-import "imaplib" `
     --exclude-module "PyQt5" --exclude-module "PyQt6" `
     --exclude-module "PySide2" --exclude-module "PySide6" `
     --exclude-module "matplotlib" --exclude-module "numpy" `

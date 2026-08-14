@@ -1,6 +1,6 @@
 # 验证码蓝牙中继工具
 
-自动读取 Android 手机短信验证码，通过蓝牙实时推送到 PC 并写入剪贴板，`Ctrl+V` 即可粘贴。
+自动读取 Android 手机短信验证码，通过蓝牙实时推送到 PC 并写入剪贴板，`Ctrl+V` 即可粘贴。同时支持 **IMAP 轮询邮箱**，自动提取邮箱验证码并复用同一处理管道（剪贴板 + 通知 + 记录）。
 
 ![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Windows-green) ![Language](https://img.shields.io/badge/language-Kotlin%20%7C%20Python-orange)
 
@@ -21,7 +21,8 @@ Android 手机                            PC (Windows)
 │ · 反射直连蓝牙端口    │              │ · 写剪贴板+通知        │
 │ · 前台服务保活        │              │ · 系统托盘+轻量UI      │
 │ · 验证码保护检测      │              │ · 一键生成Token        │
-└─────────────────────┘              └──────────────────────┘
+└─────────────────────┘              │ · IMAP 轮询邮箱验证码  │
+                                     └──────────────────────┘
 ```
 
 PC 端使用 **Winsock2 蓝牙 API 直接监听 RFCOMM 端口**，绕过 Windows COM 端口中间层，其他软件扫描/占用 COM 端口完全不影响连接。
@@ -30,6 +31,7 @@ PC 端使用 **Winsock2 蓝牙 API 直接监听 RFCOMM 端口**，绕过 Windows
 
 - **自动提取验证码** — 中英文验证码正则识别，规则可配置
 - **蓝牙实时传输** — Winsock2 直连 RFCOMM 端口，绕过 COM 端口，不受其他软件干扰
+- **邮箱验证码接收** — IMAP 轮询收件箱，自动提取邮件中的验证码，与短信共用同一处理管道（内置 QQ/163/Gmail 预设）
 - **自动写入剪贴板** — 收到验证码后 1 秒内写入 PC 剪贴板，Ctrl+V 粘贴
 - **Windows 通知** — 弹出通知显示验证码和发送方
 - **系统托盘常驻** — 无终端窗口，双击托盘图标弹出轻量状态窗口
@@ -90,6 +92,19 @@ adb install "app\build\outputs\apk\release\app-release.apk"
 
 手机收到含验证码的短信后，1 秒内 PC 剪贴板自动更新为验证码，同时弹出 Windows 通知。`Ctrl+V` 粘贴即可。
 
+### 5. 接收邮箱验证码（可选）
+
+1. 在 PC 端主窗口点击「邮箱设置」
+2. 勾选「启用邮箱接收」，选择预设（QQ 邮箱/网易/Gmail 等，自动填充 IMAP 服务器），或手动填写
+3. 填写邮箱账号与**授权码**：
+   - **QQ 邮箱**：网页端 → 设置 → 账号 → 开启 IMAP/SMTP 服务 → 生成授权码（非登录密码）
+   - **网易 163/126**：设置 → POP3/SMTP/IMAP → 开启并获取授权码
+   - **Gmail**：开启两步验证后在「应用专用密码」中生成
+4. 点击「测试连接」确认可登录，再点「保存」
+5. 邮箱收到含验证码的邮件后，验证码会自动复制到剪贴板并弹出通知
+
+> **严格匹配**（默认开启）：只处理主题/正文含「验证码、verification code、OTP」等关键词的邮件，避免营销邮件中的随机数字被误当作验证码复制到剪贴板。可在「邮箱设置」中关闭。
+
 ## 验证码识别规则
 
 默认规则（可在 `config.yaml` 热更新，无需改代码）：
@@ -109,6 +124,7 @@ CAPTCHA/
 │   ├── server.py                  主程序（UI+托盘+剪贴板+通知）
 │   ├── bt_rfcomm.py               Winsock2 蓝牙 RFCOMM 服务端
 │   ├── code_parser.py             验证码正则提取
+│   ├── email_poller.py            IMAP 邮箱验证码轮询
 │   ├── config.yaml                配置（内嵌进 exe）
 │   ├── config.yaml.example        配置模板
 │   ├── app_icon.ico / .png        应用图标
@@ -166,6 +182,16 @@ A: 编辑 `%APPDATA%\SmsRelay\config.yaml` 的 `code_rules`，添加自定义正
 ### Q: 如何更换 Token
 A: PC 端主窗口点击"生成新 Token"按钮，自动生成随机串并复制到剪贴板。然后在手机 App 中更新相同 Token。
 
+### Q: 邮箱验证码收不到
+A: 排查：
+1. 确认已在网页端开启 IMAP 并使用**授权码**（非登录密码）
+2. 点击「测试连接」确认能登录；若失败请检查服务器/端口（QQ 为 `imap.qq.com:993`）
+3. 确认验证码邮件在收件箱（而非垃圾箱/文件夹），`since_days` 只处理最近 N 天的邮件
+4. 查看状态栏「邮箱:」是否显示异常；日志位于 `%APPDATA%\SmsRelay\logs\server.log`
+
+### Q: 邮箱授权码安全吗
+A: 授权码以明文存于 `%APPDATA%\SmsRelay\config.yaml`（本机文件）。建议使用独立授权码，QQ 授权码仅限 IMAP/SMTP 用途，可随时在网页端撤销重置。
+
 ## 安全说明
 
 - Token 为预共享密钥，防止蓝牙链路上的伪造消息
@@ -184,6 +210,7 @@ A: PC 端主窗口点击"生成新 Token"按钮，自动生成随机串并复制
 | 通信协议 | JSON over RFCOMM，`\n` 分行 |
 | Android 短信 | SmsPoller 轮询 `content://sms/inbox`（绕过广播冻结） |
 | Android 蓝牙 | 反射调用 `createRfcommSocket(port)` 直连（绕过 SDP 查询） |
+| 邮箱验证码 | Python `imaplib` IMAP4_SSL 轮询收件箱（零第三方依赖） |
 
 ## 从源码构建
 

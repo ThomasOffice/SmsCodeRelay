@@ -20,6 +20,7 @@ import yaml
 import pyperclip
 
 from bt_rfcomm import BtRfcommServer
+from email_poller import EmailPoller, EMAIL_PRESETS
 
 try:
     from win11toast import toast
@@ -154,6 +155,13 @@ class CodeHandler:
             log.info("未能提取验证码: sender=%s body=%s", sender, body[:80])
             return False
 
+        return self.process_code(code, sender)
+
+    def process_code(self, code: str, sender: str) -> bool:
+        """处理一条验证码：去重 → 写剪贴板 → 记录 → 通知。
+
+        手机短信与邮箱验证码共用此管道。
+        """
         now = time.time()
         if code == self._last_code and (now - self._last_ts) < self.dedup_seconds:
             log.info("重复验证码已忽略: %s", code)
@@ -205,10 +213,12 @@ def make_icon_image() -> "Image.Image":
 
 # ---------------- 主应用（tkinter UI + 托盘） ----------------
 class TrayApp:
-    def __init__(self, cfg: dict, handler: CodeHandler, bt_server: BtRfcommServer, record: CodeRecord, stop_event: threading.Event):
+    def __init__(self, cfg: dict, handler: CodeHandler, bt_server: BtRfcommServer,
+                 email_poller: EmailPoller, record: CodeRecord, stop_event: threading.Event):
         self.cfg = cfg
         self.handler = handler
         self.bt_server = bt_server
+        self.email_poller = email_poller
         self.record = record
         self.stop_event = stop_event
 
@@ -251,6 +261,9 @@ class TrayApp:
         self.lbl_port = tk.Label(info, text="端口: -", anchor="w",
                                  bg="#f0f0f0", font=("Microsoft YaHei UI", 10))
         self.lbl_port.pack(anchor="w")
+        self.lbl_email = tk.Label(info, text="邮箱: 未启用", anchor="w",
+                                  bg="#f0f0f0", font=("Microsoft YaHei UI", 10))
+        self.lbl_email.pack(anchor="w")
 
         # Token 显示 + 生成新 Token 按钮（同一行）
         token_row = tk.Frame(info, bg="#f0f0f0")
@@ -286,6 +299,7 @@ class TrayApp:
         btns.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=8)
         tk.Button(btns, text="复制最新验证码", command=self._copy_latest).pack(side=tk.LEFT, padx=4)
         tk.Button(btns, text="打开配置目录", command=self._open_dir).pack(side=tk.LEFT, padx=4)
+        tk.Button(btns, text="邮箱设置", command=self._open_email_settings).pack(side=tk.LEFT, padx=4)
         tk.Button(btns, text="强制重连", command=self._force_reconnect).pack(side=tk.LEFT, padx=4)
         tk.Button(btns, text="隐藏到托盘", command=self.hide_window).pack(side=tk.RIGHT, padx=4)
 
@@ -312,6 +326,15 @@ class TrayApp:
             else:
                 self.lbl_status.config(text="状态: 正在启动蓝牙服务...", fg="#f57c00")
             self.lbl_port.config(text="端口: Winsock2 RFCOMM (直连模式)")
+            if self.email_poller.enabled:
+                if self.email_poller.last_error:
+                    self.lbl_email.config(text=f"邮箱: 异常 - {self.email_poller.last_error}",
+                                          fg="#c62828")
+                else:
+                    self.lbl_email.config(text="邮箱: 已启用，轮询中",
+                                          fg="#2e7d32")
+            else:
+                self.lbl_email.config(text="邮箱: 未启用", fg="#9e9e9e")
             latest = self.record.latest()
             if latest:
                 self.lbl_latest.config(text=f"最新验证码: {latest[1]}  (来自 {latest[2]})")
@@ -391,6 +414,138 @@ class TrayApp:
     def _open_dir(self):
         os.startfile(str(get_config_dir()))
 
+    def _open_email_settings(self):
+        """打开邮箱设置对话框。"""
+        win = tk.Toplevel(self.root)
+        win.title("邮箱验证码设置")
+        win.geometry("460x440")
+        win.transient(self.root)
+        win.grab_set()
+
+        cfg = self.cfg.get("email", {})
+        body = tk.Frame(win, bg="#f0f0f0")
+        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+
+        def row(label):
+            f = tk.Frame(body, bg="#f0f0f0")
+            f.pack(fill=tk.X, pady=3)
+            tk.Label(f, text=label, bg="#f0f0f0", width=14, anchor="w",
+                     font=("Microsoft YaHei UI", 10)).pack(side=tk.LEFT)
+            return f
+
+        var_enabled = tk.BooleanVar(value=bool(cfg.get("enabled", False)))
+        f = row("启用邮箱接收")
+        tk.Checkbutton(f, text="", variable=var_enabled, bg="#f0f0f0").pack(side=tk.LEFT)
+
+        # 预设下拉：自动填充服务器/端口
+        var_preset = tk.StringVar(value="QQ 邮箱")
+        f = row("邮箱预设")
+        combo = ttk.Combobox(f, textvariable=var_preset, state="readonly", width=22,
+                             values=list(EMAIL_PRESETS.keys()))
+        combo.pack(side=tk.LEFT)
+        combo.bind("<<ComboboxSelected>>",
+                   lambda e: _preset_selected())
+
+        def _preset_selected():
+            host, port, _ = EMAIL_PRESETS[var_preset.get()]
+            if host:
+                var_host.set(host)
+                var_port.set(str(port))
+
+        var_host = tk.StringVar(value=cfg.get("imap_host", "imap.qq.com") or "imap.qq.com")
+        f = row("IMAP 服务器")
+        tk.Entry(f, textvariable=var_host, width=28).pack(side=tk.LEFT)
+
+        var_port = tk.StringVar(value=str(cfg.get("imap_port", 993) or 993))
+        f = row("端口")
+        tk.Entry(f, textvariable=var_port, width=28).pack(side=tk.LEFT)
+
+        var_user = tk.StringVar(value=cfg.get("username", "") or "")
+        f = row("邮箱账号")
+        tk.Entry(f, textvariable=var_user, width=28).pack(side=tk.LEFT)
+
+        var_pass = tk.StringVar(value=cfg.get("password", "") or "")
+        f = row("授权码")
+        tk.Entry(f, textvariable=var_pass, show="*", width=28).pack(side=tk.LEFT)
+
+        var_interval = tk.StringVar(value=str(cfg.get("poll_interval", 30) or 30))
+        f = row("轮询间隔(秒)")
+        tk.Entry(f, textvariable=var_interval, width=28).pack(side=tk.LEFT)
+
+        var_mark = tk.BooleanVar(value=bool(cfg.get("mark_seen", True)))
+        f = row("处理后标记已读")
+        tk.Checkbutton(f, text="", variable=var_mark, bg="#f0f0f0").pack(side=tk.LEFT)
+
+        var_strict = tk.BooleanVar(value=bool(cfg.get("strict", True)))
+        f = row("严格匹配")
+        tk.Checkbutton(f, text="", variable=var_strict, bg="#f0f0f0").pack(side=tk.LEFT)
+        tk.Label(f, text="仅处理含\"验证码\"关键词的邮件", bg="#f0f0f0", fg="#8d6e63",
+                 font=("Microsoft YaHei UI", 9)).pack(side=tk.LEFT, padx=4)
+
+        tk.Label(body, text="QQ 邮箱需在网页端开启 IMAP 并生成授权码\n"
+                            "（设置 → 账号 → 开启 IMAP/SMTP 服务）",
+                 bg="#f0f0f0", fg="#8d6e63", justify="left",
+                 font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(8, 0))
+
+        btn_row = tk.Frame(body, bg="#f0f0f0")
+        btn_row.pack(fill=tk.X, pady=(12, 0))
+
+        def _test_conn():
+            import imaplib
+            host = var_host.get().strip()
+            port = int(var_port.get().strip() or 993)
+            user = var_user.get().strip()
+            pwd = var_pass.get().strip()
+            if not user or not pwd:
+                messagebox.showwarning("提示", "请先填写邮箱账号和授权码", parent=win)
+                return
+            win.config(cursor="wait")
+            win.update()
+            try:
+                conn = imaplib.IMAP4_SSL(host, port, timeout=15)
+                conn.login(user, pwd)
+                conn.logout()
+                messagebox.showinfo("测试成功", "IMAP 连接并登录成功", parent=win)
+            except Exception as e:
+                messagebox.showerror("测试失败", f"连接失败：{e}", parent=win)
+            finally:
+                win.config(cursor="")
+
+        tk.Button(btn_row, text="测试连接", command=_test_conn).pack(side=tk.LEFT, padx=4)
+        tk.Button(btn_row, text="保存", command=lambda: _save(True)).pack(side=tk.LEFT, padx=4)
+        tk.Button(btn_row, text="取消", command=win.destroy).pack(side=tk.LEFT, padx=4)
+
+        def _save(show_msg: bool):
+            try:
+                interval = int(var_interval.get().strip())
+            except ValueError:
+                messagebox.showwarning("提示", "轮询间隔必须为整数", parent=win)
+                return
+            email_cfg = {
+                "enabled": var_enabled.get(),
+                "imap_host": var_host.get().strip() or "imap.qq.com",
+                "imap_port": int(var_port.get().strip() or 993),
+                "username": var_user.get().strip(),
+                "password": var_pass.get().strip(),
+                "poll_interval": interval,
+                "since_days": self.cfg.get("email", {}).get("since_days", 1),
+                "mark_seen": var_mark.get(),
+                "strict": var_strict.get(),
+            }
+            self.cfg["email"] = email_cfg
+            try:
+                save_config(self.cfg)
+            except Exception as e:
+                log.error("保存邮箱配置失败: %s", e)
+                messagebox.showerror("错误", f"保存配置失败：{e}", parent=win)
+                return
+            self.email_poller.apply_config(email_cfg)
+            win.destroy()
+            if show_msg:
+                self._flash_status("邮箱配置已保存")
+            log.info("邮箱配置已保存: enabled=%s host=%s", email_cfg["enabled"],
+                     email_cfg["imap_host"])
+
     def show_window(self, icon=None, item=None):
         self.root.after(0, lambda: (self.root.deiconify(), self.root.lift(), self.root.focus_force()))
 
@@ -436,7 +591,10 @@ def main():
     bt_server = BtRfcommServer(handler, stop_event)
     bt_server.start()
 
-    app = TrayApp(cfg, handler, bt_server, record, stop_event)
+    email_poller = EmailPoller(handler, record, stop_event, cfg.get("email", {}))
+    email_poller.start()
+
+    app = TrayApp(cfg, handler, bt_server, email_poller, record, stop_event)
     app.run()
 
     stop_event.set()
