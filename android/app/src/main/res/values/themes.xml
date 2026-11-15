@@ -1,8 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.SmsRelay" parent="Theme.MaterialComponents.DayNight">
-        <item name="colorPrimary">@color/primary</item>
-        <item name="colorPrimaryVariant">@color/primary</item>
-        <item name="android:statusBarColor">@color/primary</item>
-    </style>
+    <!-- Compose 负责实际配色（Material 3 + 动态取色），这里只提供无 ActionBar 的基础主题 -->
+    <style name="Theme.SmsRelay" parent="Theme.Material3.DayNight.NoActionBar" />
 </resources>

@@ -8,7 +8,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
 object NotifHelper {
-    private const val CHANNEL_ID = "sms_relay_debug"
+    private const val CHANNEL_ID = "sms_relay_debug_v2"
     private const val CHANNEL_NAME = "验证码中继调试"
     private var nextId = 1000
 
@@ -25,7 +25,7 @@ object NotifHelper {
     fun show(context: Context, title: String, text: String) {
         ensureChannel(context)
         val notif = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.drawable.ic_stat_relay)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))

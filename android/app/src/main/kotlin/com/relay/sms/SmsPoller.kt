@@ -20,7 +20,7 @@ class SmsPoller(private val context: Context) {
     fun start() {
         if (running) return
         maxSeenId = getLatestSmsId()
-        MainActivity.log("轮询启动，基准 id=$maxSeenId")
+        RelayLog.log("轮询启动，基准 id=$maxSeenId")
         running = true
         thread = Thread {
             while (running) {
@@ -64,12 +64,11 @@ class SmsPoller(private val context: Context) {
             // 按时间顺序处理（旧的先处理）
             newMsgs.reversed().forEach { (id, sender, body) ->
                 Log.i(TAG, "轮询发现新短信 id=$id sender=$sender")
-                MainActivity.log("轮询发现新短信: id=$id sender=$sender")
+                RelayLog.log("轮询发现新短信: id=$id sender=$sender")
                 // 验证码安全保护检测
                 val prot = CodeProtector.detect(body)
                 if (prot.risk != CodeProtector.Risk.NONE) {
-                    MainActivity.log("⚠ ${prot.message}")
-                    MainActivity.showWarning(prot.message)
+                    RelayLog.warn(prot.message)
                     NotifHelper.show(context, "验证码保护提醒", prot.message)
                 }
                 SmsProcessor.process(context, sender, body)
@@ -90,12 +89,12 @@ class SmsPoller(private val context: Context) {
             cursor.use {
                 if (it.moveToFirst()) {
                     val id = it.getLong(0)
-                    MainActivity.log("当前最新短信 id=$id")
+                    RelayLog.log("当前最新短信 id=$id")
                     return id
                 }
             }
         } catch (e: Exception) {
-            MainActivity.log("查询最新 id 异常: ${e.message}")
+            RelayLog.log("查询最新 id 异常: ${e.message}")
         }
         return 0
     }

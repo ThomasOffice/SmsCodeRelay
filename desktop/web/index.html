@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>验证码中继</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- 背景装饰：径向光晕 -->
+<div class="bg-decor" aria-hidden="true">
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+  <div class="blob blob-3"></div>
+</div>
+
+<div id="app">
+  <!-- 自定义标题栏 -->
+  <header id="titlebar" class="pywebview-drag-region">
+    <div class="brand">
+      <span class="app-mark" id="app-mark"></span>
+      <span class="brand-name">验证码中继</span>
+      <span class="version-chip">v2.0</span>
+    </div>
+    <div class="titlebar-actions">
+      <button class="tb-btn" id="btn-appearance" title="切换外观（深/浅色）"></button>
+      <button class="tb-btn" id="btn-settings" title="设置"></button>
+      <span class="tb-divider"></span>
+      <button class="tb-btn" id="btn-minimize" title="最小化"></button>
+      <button class="tb-btn tb-close" id="btn-close" title="隐藏到托盘"></button>
+    </div>
+  </header>
+
+  <!-- 主视图：仪表盘 -->
+  <main id="dashboard">
+    <div class="hero-grid">
+      <!-- 左：最新验证码 hero -->
+      <section class="glass hero-card">
+        <div class="hero-caption"><span class="micro">最新验证码</span></div>
+        <div class="hero-code" id="hero-code">—</div>
+        <div class="hero-meta" id="hero-meta">尚未收到验证码</div>
+        <button class="btn-primary" id="btn-copy-latest">
+          <span class="btn-icon" data-icon="copy"></span><span>复制验证码</span>
+        </button>
+        <div class="hero-status">
+          <div class="status-item">
+            <span class="orb" id="bt-orb"></span>
+            <span class="status-text" id="bt-label">启动中…</span>
+          </div>
+          <div class="status-item">
+            <span class="orb orb-muted" id="email-orb"></span>
+            <span class="status-text" id="email-label">邮箱未启用</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 右：历史时间线 -->
+      <section class="glass history-card">
+        <div class="card-head">
+          <span class="card-title"><span class="btn-icon" data-icon="history"></span>最近接收</span>
+          <span class="count-chip" id="hist-count">0</span>
+        </div>
+        <div class="history-list" id="history-list">
+          <div class="empty-state">
+            <span class="empty-icon" data-icon="inbox"></span>
+            <p>收到的验证码会出现在这里</p>
+            <p class="empty-hint">点击任意一行即可复制</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="action-row">
+      <button class="btn-ghost" id="btn-reconnect"><span class="btn-icon" data-icon="refresh"></span>强制重连</button>
+      <button class="btn-ghost" id="btn-open-dir"><span class="btn-icon" data-icon="folder"></span>打开配置目录</button>
+      <button class="btn-ghost" id="btn-hide"><span class="btn-icon" data-icon="minimize"></span>隐藏到托盘</button>
+    </div>
+  </main>
+
+  <!-- 状态条 -->
+  <footer id="statusbar">
+    <span class="sb-item"><span class="btn-icon" data-icon="shield"></span><span id="sb-bt">Winsock2 RFCOMM 直连 · 端口 5</span></span>
+    <span class="sb-item sb-right">SmsRelay · Fluent Glass</span>
+  </footer>
+</div>
+
+<!-- 设置滑出面板 -->
+<div id="settings-backdrop" hidden></div>
+<aside id="settings-drawer" class="glass" hidden>
+  <div class="drawer-head">
+    <span class="drawer-title"><span class="btn-icon" data-icon="settings"></span>设置</span>
+    <button class="tb-btn" id="btn-settings-close" title="关闭"><span data-icon="x"></span></button>
+  </div>
+  <div class="drawer-body">
+    <!-- Token -->
+    <section class="card-section">
+      <div class="section-caption"><span class="btn-icon" data-icon="shield"></span>Token（与手机 App 一致）</div>
+      <div class="token-display" id="token-display">—</div>
+      <div class="row-actions">
+        <button class="btn-ghost sm" id="btn-copy-token"><span class="btn-icon" data-icon="copy"></span>复制</button>
+        <button class="btn-ghost sm" id="btn-gen-token"><span class="btn-icon" data-icon="refresh"></span>生成新 Token</button>
+      </div>
+    </section>
+
+    <!-- 邮箱 -->
+    <section class="card-section">
+      <div class="section-caption"><span class="btn-icon" data-icon="mail"></span>邮箱验证码（IMAP）</div>
+      <label class="switch-row">
+        <span>启用邮箱接收</span>
+        <input type="checkbox" id="email-enabled" class="switch"><span class="switch-ui"></span>
+      </label>
+      <div class="field">
+        <label>邮箱预设</label>
+        <select id="email-preset"></select>
+      </div>
+      <div class="field"><label>IMAP 服务器</label><input type="text" id="email-host" placeholder="imap.qq.com"></div>
+      <div class="field-inline">
+        <div class="field"><label>端口</label><input type="number" id="email-port" placeholder="993"></div>
+        <div class="field"><label>轮询间隔(秒)</label><input type="number" id="email-interval" placeholder="30"></div>
+      </div>
+      <div class="field"><label>邮箱账号</label><input type="text" id="email-user" placeholder="you@example.com"></div>
+      <div class="field">
+        <label>授权码</label>
+        <div class="input-with-icon">
+          <input type="password" id="email-pass" placeholder="IMAP 授权码（非登录密码）">
+          <button class="icon-btn" id="btn-toggle-pass" title="显示/隐藏"><span data-icon="eye"></span></button>
+        </div>
+      </div>
+      <label class="switch-row"><span>处理后标记已读</span><input type="checkbox" id="email-mark" class="switch"><span class="switch-ui"></span></label>
+      <label class="switch-row"><span>严格匹配（仅含验证码关键词）</span><input type="checkbox" id="email-strict" class="switch"><span class="switch-ui"></span></label>
+      <div class="row-actions">
+        <button class="btn-ghost sm" id="btn-test-email"><span class="btn-icon" data-icon="zap"></span>测试连接</button>
+        <button class="btn-primary sm" id="btn-save-email"><span class="btn-icon" data-icon="save"></span>保存邮箱设置</button>
+      </div>
+    </section>
+
+    <!-- 通知 + 外观 -->
+    <section class="card-section">
+      <div class="section-caption"><span class="btn-icon" data-icon="bell"></span>偏好</div>
+      <label class="switch-row"><span>收到验证码时弹出 Windows 通知</span><input type="checkbox" id="notify-enabled" class="switch"><span class="switch-ui"></span></label>
+      <div class="field">
+        <label>外观</label>
+        <div class="segmented" id="appearance-seg">
+          <button data-mode="dark" class="seg active"><span class="btn-icon" data-icon="moon"></span>深色</button>
+          <button data-mode="light" class="seg"><span class="btn-icon" data-icon="sun"></span>浅色</button>
+          <button data-mode="system" class="seg"><span class="btn-icon" data-icon="monitor"></span>跟随系统</button>
+        </div>
+      </div>
+      <label class="switch-row"><span>关闭时最小化到托盘</span><input type="checkbox" id="close-to-tray" class="switch"><span class="switch-ui"></span></label>
+      <label class="switch-row"><span>启动时最小化到托盘</span><input type="checkbox" id="start-to-tray" class="switch"><span class="switch-ui"></span></label>
+      <label class="switch-row"><span>开机自启动</span><input type="checkbox" id="autostart" class="switch"><span class="switch-ui"></span></label>
+    </section>
+  </div>
+</aside>
+
+<!-- 全局 toast -->
+<div id="toast-container"></div>
+
+<!-- 确认对话框 -->
+<div id="confirm-backdrop" hidden>
+  <div class="confirm-box glass" id="confirm-box"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

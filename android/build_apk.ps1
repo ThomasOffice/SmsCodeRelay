@@ -8,9 +8,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$JAVA_HOME = $env:JAVA_HOME
+# Gradle 8.11.1 需要 JDK 17（不支持 JDK 25），优先使用本机 JDK 17
+$JAVA_HOME = "C:\Android\jdk17\jdk-17.0.21+9"
+if (-not (Test-Path $JAVA_HOME)) {
+    $JAVA_HOME = $env:JAVA_HOME
+}
 if (-not $JAVA_HOME -or -not (Test-Path $JAVA_HOME)) {
-    $JAVA_HOME = "C:\Program Files\Microsoft\jdk-17.0.20.8-hotspot"
+    Write-Host "未找到 JDK 17，请安装或设置 JAVA_HOME" -ForegroundColor Red
+    exit 1
 }
 $env:JAVA_HOME = $JAVA_HOME
 $env:ANDROID_HOME = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { "C:\Android\sdk" }

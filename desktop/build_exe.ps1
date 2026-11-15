@@ -8,6 +8,10 @@ Set-Location -LiteralPath $PSScriptRoot
 
 Write-Host "===== SmsRelay exe build =====" -ForegroundColor Cyan
 
+# 结束运行中的实例，避免 exe 被锁定导致写入失败
+Get-Process SmsRelay -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 1
+
 Remove-Item -Path "build","dist" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "SmsRelay.spec" -Force -ErrorAction SilentlyContinue
 
@@ -18,7 +22,11 @@ pyinstaller --noconfirm --windowed --onefile `
     --add-data "app_icon.png;." `
     --collect-all pystray `
     --collect-all PIL `
+    --collect-all webview `
+    --add-data "web;web" `
     --hidden-import "tkinter" `
+    --hidden-import "config" `
+    --hidden-import "webview_app" `
     --hidden-import "code_parser" `
     --hidden-import "bt_rfcomm" `
     --hidden-import "email_poller" `

@@ -15,11 +15,11 @@
 ```
 Android 手机                            PC (Windows)
 ┌─────────────────────┐  蓝牙 RFCOMM  ┌──────────────────────┐
-│ 辅助 App (Kotlin)    │ ────────────> │ Python 服务           │
+│ Compose M3 App       │ ────────────> │ Python 服务           │
 │ · 轮询短信数据库      │  JSON 行      │ · Winsock2 直连监听    │
 │ · 正则提取验证码      │              │ · token 校验去重       │
 │ · 反射直连蓝牙端口    │              │ · 写剪贴板+通知        │
-│ · 前台服务保活        │              │ · 系统托盘+轻量UI      │
+│ · 前台服务保活        │              │ · 托盘+WebView2 UI    │
 │ · 验证码保护检测      │              │ · 一键生成Token        │
 └─────────────────────┘              │ · IMAP 轮询邮箱验证码  │
                                      └──────────────────────┘
@@ -34,10 +34,10 @@ PC 端使用 **Winsock2 蓝牙 API 直接监听 RFCOMM 端口**，绕过 Windows
 - **邮箱验证码接收** — IMAP 轮询收件箱，自动提取邮件中的验证码，与短信共用同一处理管道（内置 QQ/163/Gmail 预设）
 - **自动写入剪贴板** — 收到验证码后 1 秒内写入 PC 剪贴板，Ctrl+V 粘贴
 - **Windows 通知** — 弹出通知显示验证码和发送方
-- **系统托盘常驻** — 无终端窗口，双击托盘图标弹出轻量状态窗口
+- **现代 UI（Fluent Glass）** — 双端统一设计系统：炭黑底/暖白底、翡翠渐变、Inter/JetBrains Mono 字体、Lucide 线性图标、hero 验证码 + 时间线 + 状态球；PC 端 WebView2 渲染（毛玻璃/动效），Android 端 Jetpack Compose 实现同款语言，均支持深/浅色/跟随系统
+- **系统托盘常驻** — 无终端窗口，双击托盘图标弹出状态窗口
 - **一键生成 Token** — UI 内生成随机 Token，自动复制到剪贴板
 - **验证码安全保护检测** — 检测华为/荣耀等国产 ROM 的验证码保护功能并提醒
-- **深色模式适配** — 日志区配色随系统主题切换
 - **华为/荣耀后台保活** — 轮询短信数据库，绕过后台广播冻结
 
 ## 前置条件
@@ -45,6 +45,7 @@ PC 端使用 **Winsock2 蓝牙 API 直接监听 RFCOMM 端口**，绕过 Windows
 - Windows 10/11 PC，带蓝牙
 - Android 7.0+ 手机
 - 手机与 PC 已蓝牙配对
+- PC 端 UI 依赖 Edge WebView2 运行时（Windows 11 自带；Windows 10 若缺失会自动引导安装）
 
 ## 快速开始
 
@@ -64,7 +65,7 @@ python server.py          # 直接运行
 pwsh -ExecutionPolicy Bypass -File build_exe.ps1
 ```
 
-启动后无终端窗口，自动隐藏到系统托盘。双击托盘图标弹出轻量状态窗口（显示连接状态、Token、最近验证码记录），关闭窗口则回到托盘后台运行。右键托盘图标可退出。
+启动后显示 Fluent Glass 主窗口：左侧超大验证码 hero 卡片（点击复制）与连接状态，右侧最近接收时间线（点击行复制）。点击右上角齿轮打开「设置」抽屉，管理 Token、邮箱接收、通知与深/浅色外观；标题栏可拖动、最小化，关闭按钮隐藏到系统托盘。双击托盘图标重新打开主窗口，右键托盘图标退出。
 
 ### 2. 安装 Android App
 
@@ -85,7 +86,7 @@ adb install "app\build\outputs\apk\release\app-release.apk"
    - 打开手机上的"验证码中继"App
    - 授予短信和蓝牙权限
    - 选择已配对的 PC 蓝牙设备
-   - 输入与 PC 端相同的 token（PC 端主窗口可见，点击可复制）
+   - 输入与 PC 端相同的 token（PC 端「设置」抽屉可见，点击可复制）
    - 点击"保存配置" → "启动监听"
 
 ### 4. 使用
@@ -94,16 +95,16 @@ adb install "app\build\outputs\apk\release\app-release.apk"
 
 ### 5. 接收邮箱验证码（可选）
 
-1. 在 PC 端主窗口点击「邮箱设置」
-2. 勾选「启用邮箱接收」，选择预设（QQ 邮箱/网易/Gmail 等，自动填充 IMAP 服务器），或手动填写
+1. 在 PC 端主窗口点击右上角齿轮，打开「设置」抽屉，找到「邮箱验证码」卡片
+2. 打开「启用邮箱接收」开关，选择预设（QQ 邮箱/网易/Gmail 等，自动填充 IMAP 服务器），或手动填写
 3. 填写邮箱账号与**授权码**：
    - **QQ 邮箱**：网页端 → 设置 → 账号 → 开启 IMAP/SMTP 服务 → 生成授权码（非登录密码）
    - **网易 163/126**：设置 → POP3/SMTP/IMAP → 开启并获取授权码
    - **Gmail**：开启两步验证后在「应用专用密码」中生成
-4. 点击「测试连接」确认可登录，再点「保存」
+4. 点击「测试连接」确认可登录，再点「保存邮箱设置」
 5. 邮箱收到含验证码的邮件后，验证码会自动复制到剪贴板并弹出通知
 
-> **严格匹配**（默认开启）：只处理主题/正文含「验证码、verification code、OTP」等关键词的邮件，避免营销邮件中的随机数字被误当作验证码复制到剪贴板。可在「邮箱设置」中关闭。
+> **严格匹配**（默认开启）：只处理主题/正文含「验证码、verification code、OTP」等关键词的邮件，避免营销邮件中的随机数字被误当作验证码复制到剪贴板。可在「设置」抽屉中关闭。
 
 ## 验证码识别规则
 
@@ -121,7 +122,10 @@ CAPTCHA/
 ├── protocol.md                    通信协议
 ├── LICENSE                        MIT
 ├── desktop/                       PC 端 Python 服务
-│   ├── server.py                  主程序（UI+托盘+剪贴板+通知）
+│   ├── server.py                  主入口（验证码处理管道+启动装配）
+│   ├── webview_app.py             WebView2 窗口+JS API+系统托盘
+│   ├── web/                       Fluent Glass 前端（HTML/CSS/JS+字体）
+│   ├── config.py                  配置与路径管理
 │   ├── bt_rfcomm.py               Winsock2 蓝牙 RFCOMM 服务端
 │   ├── code_parser.py             验证码正则提取
 │   ├── email_poller.py            IMAP 邮箱验证码轮询
@@ -130,7 +134,7 @@ CAPTCHA/
 │   ├── app_icon.ico / .png        应用图标
 │   ├── build_exe.ps1              exe 打包脚本
 │   └── requirements.txt           Python 依赖
-└── android/                       Android App 工程
+└── android/                       Android App 工程（Compose + Fluent Glass）
     ├── build_apk.ps1              APK 打包脚本
     ├── settings.gradle.kts
     ├── build.gradle.kts
@@ -140,11 +144,18 @@ CAPTCHA/
         ├── build.gradle.kts
         └── src/main/
             ├── AndroidManifest.xml
-            ├── res/                        布局/图标/主题/夜间配色
+            ├── res/                        图标/主题
             └── kotlin/com/relay/sms/
-                ├── MainActivity.kt          配置界面+日志+测试按钮
+                ├── MainActivity.kt          Compose 入口+权限请求
+                ├── MainViewModel.kt         UI 状态与交互逻辑
+                ├── RelayLog.kt              全局日志总线（StateFlow）
+                ├── Prefs.kt                 配置存储常量
+                ├── ui/GlassTheme.kt         Fluent Glass 配色/字体/形状令牌
+                ├── ui/GlassIcons.kt         Lucide 风格矢量图标库
+                ├── ui/GlassComponents.kt    玻璃卡片/渐变按钮/状态球/开关等
+                ├── ui/GlassDashboard.kt     主界面（hero 验证码+时间线）
+                ├── ui/GlassSettingsSheet.kt 设置抽屉（设备/Token/外观/日志）
                 ├── SmsPoller.kt             短信数据库轮询
-                ├── SmsReceiver.kt           短信广播接收（备用）
                 ├── CodeExtractor.kt         验证码正则提取
                 ├── CodeProtector.kt         验证码安全保护检测
                 ├── BtClient.kt              蓝牙反射直连客户端
@@ -180,7 +191,7 @@ A: 在手机系统设置中：关闭该 App 的电池优化 + 允许自启动 + 
 A: 编辑 `%APPDATA%\SmsRelay\config.yaml` 的 `code_rules`，添加自定义正则规则。
 
 ### Q: 如何更换 Token
-A: PC 端主窗口点击"生成新 Token"按钮，自动生成随机串并复制到剪贴板。然后在手机 App 中更新相同 Token。
+A: PC 端「设置」抽屉中点击"生成新 Token"按钮，自动生成随机串并复制到剪贴板。然后在手机 App 中更新相同 Token。
 
 ### Q: 邮箱验证码收不到
 A: 排查：
@@ -204,9 +215,9 @@ A: 授权码以明文存于 `%APPDATA%\SmsRelay\config.yaml`（本机文件）�
 
 | 模块 | 技术 |
 |------|------|
-| Android | Kotlin + Gradle 8.7 + AGP 8.5.2 + compileSdk 34 |
+| Android | Kotlin 2.0 + Jetpack Compose + Fluent Glass 设计系统（与 PC 统一）+ Gradle 8.11.1 + AGP 8.7.3 + compileSdk 35 |
 | 蓝牙通信 | Winsock2 RFCOMM 直连（绕过 COM 端口和 SDP） |
-| PC 端 | Python 3.13 + ctypes + tkinter + pystray + pyperclip + win11toast |
+| PC 端 | Python 3.13 + pywebview（WebView2 渲染 HTML/CSS/JS）+ ctypes + pystray + pyperclip + win11toast |
 | 通信协议 | JSON over RFCOMM，`\n` 分行 |
 | Android 短信 | SmsPoller 轮询 `content://sms/inbox`（绕过广播冻结） |
 | Android 蓝牙 | 反射调用 `createRfcommSocket(port)` 直连（绕过 SDP 查询） |

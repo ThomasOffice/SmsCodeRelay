@@ -42,7 +42,7 @@ Android App 通过蓝牙 SPP (RFCOMM) 向 PC 端推送验证码消息。
 
 ## PC 端处理流程
 
-1. 从 COM 端口按行读取 JSON
+1. 从 Winsock2 RFCOMM socket 按行读取 JSON
 2. JSON 解析失败 → 记日志丢弃
 3. token 校验失败 → 记日志丢弃
 4. 提取验证码：优先 `code` 字段，为空则用配置规则从 `body` 提取
@@ -55,4 +55,4 @@ Android App 通过蓝牙 SPP (RFCOMM) 向 PC 端推送验证码消息。
 
 - token 为预共享密钥，App 与 PC 必须一致
 - 蓝牙配对本身提供链路层加密
-- PC 端仅监听蓝牙传入 COM 端口，不暴露网络端口
+- PC 端仅监听蓝牙 RFCOMM 端口（Winsock2 直连，固定端口 5），不暴露网络端口

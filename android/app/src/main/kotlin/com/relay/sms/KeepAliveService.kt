@@ -13,8 +13,12 @@ import androidx.core.app.NotificationCompat
 class KeepAliveService : Service() {
     companion object {
         private const val TAG = "KeepAliveService"
-        private const val CHANNEL_ID = "sms_relay_channel"
+        private const val CHANNEL_ID = "sms_relay_channel_v2"
         private const val NOTIF_ID = 1
+
+        @Volatile
+        var isRunning = false
+            private set
     }
 
     private var poller: SmsPoller? = null
@@ -28,26 +32,28 @@ class KeepAliveService : Service() {
         val notif = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("验证码中继运行中")
             .setContentText("正在轮询短信并转发到 PC")
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.drawable.ic_stat_relay)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
         startForeground(NOTIF_ID, notif)
+        isRunning = true
 
         if (poller == null) {
             poller = SmsPoller(this)
             poller?.start()
             Log.i(TAG, "短信轮询已启动")
         } else {
-            MainActivity.log("轮询已在运行")
+            RelayLog.log("轮询已在运行")
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        isRunning = false
         poller?.stop()
         poller = null
-        MainActivity.log("服务已停止")
+        RelayLog.log("服务已停止")
         super.onDestroy()
     }
 
